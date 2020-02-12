@@ -324,6 +324,7 @@ fn parse_enum_variant<'a, 'b, I: Iterator<Item=(usize, char)>>(mut chars: &'b mu
             // we already have an identifier, now looking for a value
             if c == '=' {
                 let value = parse_enum_identifier(&mut chars, start, left)?;
+                if value.len() == 0 { return None }
                 return Some((identifier, value));
             }
         } else {
@@ -443,6 +444,20 @@ mod test {
     }
 
     #[test]
+    fn test_parse_enum8_no_value() {
+        let enum8 = remove_white_spaces("Enum8 ('a' =)");
+
+        assert!(dbg!(parse_enum8(enum8.as_str())).is_none());
+    }
+
+    #[test]
+    fn test_parse_enum8_no_ident() {
+        let enum8 = remove_white_spaces("Enum8 ( = 1)");
+
+        assert!(dbg!(parse_enum8(enum8.as_str())).is_none());
+    }
+
+    #[test]
     fn test_parse_enum16() {
         let enum16 = remove_white_spaces("Enum16 ('a' = 1, 'b' = 2)");
 
@@ -473,4 +488,33 @@ mod test {
         let res = parse_enum16(enum16.as_str()).unwrap();
         assert_eq!(res, vec![("".to_owned(), 1)])
     }
+
+    #[test]
+    fn test_parse_enum16_extra_comma() {
+        let enum16 = remove_white_spaces("Enum16 ('a' = 1, 'b' = 2,)");
+
+        assert!(dbg!(parse_enum16(enum16.as_str())).is_none());
+    }
+
+    #[test]
+    fn test_parse_enum16_empty() {
+        let enum16 = remove_white_spaces("Enum16 ()");
+
+        assert!(dbg!(parse_enum16(enum16.as_str())).is_none());
+    }
+
+    #[test]
+    fn test_parse_enum16_no_value() {
+        let enum16 = remove_white_spaces("Enum16 ('a' =)");
+
+        assert!(dbg!(parse_enum16(enum16.as_str())).is_none());
+    }
+
+    #[test]
+    fn test_parse_enum16_no_ident() {
+        let enum16 = remove_white_spaces("Enum16 ( = 1)");
+
+        assert!(dbg!(parse_enum16(enum16.as_str())).is_none());
+    }
+
 }
