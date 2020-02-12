@@ -363,6 +363,16 @@ mod test {
         let res = parse_enum8(enum8.as_str()).unwrap();
         assert_eq!(res, vec![("a".to_owned(), 1), ("b".to_owned(), 2)])
     }
+
+    #[test]
+    fn test_parse_enum8_with_empties() {
+        let enum8 = remove_white_spaces("Enum8 ('a' = 1)");
+
+        let res = parse_enum8(enum8.as_str()).unwrap();
+        assert_eq!(res, vec![("a".to_owned(), 1)])
+        // assert_eq!(res, vec![("a".to_owned(), 1), ("b".to_owned(), 2)])
+    }
+
     #[test]
     fn test_parse_enum16() {
         let enum8 = remove_white_spaces("Enum16 ('a' = 1, 'b' = 2)");
