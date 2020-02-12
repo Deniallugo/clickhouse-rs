@@ -1,14 +1,7 @@
 use std::str::FromStr;
+use std::iter::Peekable;
 
 use chrono_tz::Tz;
-use nom::{
-    bytes::complete::{is_not, tag},
-    character::complete::char,
-    multi::many1,
-    sequence::{delimited, separated_pair, terminated},
-    IResult,
-};
-
 use crate::{
     binary::ReadEx,
     errors::Result,
@@ -262,11 +255,8 @@ enum EnumSize {
 
 fn parse_enum8(input: &str) -> Option<Vec<(String, i8)>> {
     match parse_enum(EnumSize::Enum8, input) {
-        Ok((tail, result)) => {
-            if tail != "" {
-                return None;
-            }
-            let res: Vec<(String, i8)> = result
+        Some(vec) => {
+            let res: Vec<(String, i8)> = vec
                 .iter()
                 .map(|(key, val)| {
                     (
@@ -275,18 +265,15 @@ fn parse_enum8(input: &str) -> Option<Vec<(String, i8)>> {
                     )
                 })
                 .collect();
-            return Some(res);
+            Some(res)
         }
-        Err(_) => None,
+        None => None,
     }
 }
 fn parse_enum16(input: &str) -> Option<Vec<(String, i16)>> {
     match parse_enum(EnumSize::Enum16, input) {
-        Ok((tail, result)) => {
-            if tail != "" {
-                return None;
-            }
-            let res: Vec<(String, i16)> = result
+        Some(vec) => {
+            let res: Vec<(String, i16)> = vec
                 .iter()
                 .map(|(key, val)| {
                     (
@@ -295,30 +282,83 @@ fn parse_enum16(input: &str) -> Option<Vec<(String, i16)>> {
                     )
                 })
                 .collect();
-            return Some(res);
+            Some(res)
         }
-        Err(_) => None,
+        None => None,
     }
 }
 
-fn parse_enum(size: EnumSize, input: &str) -> IResult<&str, Vec<(&str, &str)>> {
+fn parse_enum(size: EnumSize, input: &str) -> Option<Vec<(&str, &str)>> {
     let size = match size {
         EnumSize::Enum8 => "8",
         EnumSize::Enum16 => "16",
     };
-    let (input, _) = tag(format!("Enum{}", size).as_str())(input)?;
+    let enum_tag = format!("Enum{}(", size);
+    if !input.starts_with(&enum_tag) { return None }
+    let left = &input[enum_tag.len()..];
 
-    let (_, input) = delimited(char('('), is_not(")"), char(')'))(input)?;
-    let inside_enum = separated_pair(
-        // TODO case with empty name does not work
-        delimited(char('\''), is_not("'"), char('\'')),
-        char('='),
-        is_not(","),
-    );
-    let (tail, mut res) = many1(terminated(&inside_enum, char(',')))(input)?;
-    let (tail, last_enum) = inside_enum(tail)?;
-    res.push(last_enum);
-    Ok((tail, res))
+    let mut variants: Vec<(&str, &str)> = vec![];
+    let mut chars = left.chars().enumerate().peekable();
+    while let Some(variant) = parse_enum_variant(&mut chars, left) {
+        variants.push(variant);
+    }
+    // check that we reached the end
+    if chars.next().is_some() { return None }
+    // check that at least one variant is present
+    if variants.is_empty() { return None }
+    return Some(variants);
+}
+
+fn parse_enum_variant<'a, 'b, I: Iterator<Item=(usize, char)>>(mut chars: &'b mut Peekable<I>, left: &'a str)
+-> Option<(&'a str, &'a str)> {
+    let mut identifier_opt: Option<&str> = None;
+    while let Some((start, c)) = chars.next() {
+        // defence against trailing comma
+        if c == ',' {
+            let &(_, peeked) = chars.peek()?;
+            // comma is valid ony if another identifier comes right after it
+            if peeked != '\'' { return None }
+            continue;
+        }
+        if let Some(identifier) = identifier_opt {
+            // we already have an identifier, now looking for a value
+            if c == '=' {
+                let value = parse_enum_identifier(&mut chars, start, left)?;
+                return Some((identifier, value));
+            }
+        } else {
+            // looking for an identifier
+            if c == '\'' {
+                identifier_opt = Some(parse_enum_value(&mut chars, start, left)?);
+                continue;
+            }
+        }
+        return None;
+    }
+    return None;
+}
+
+fn parse_enum_identifier<'a, 'b, I: Iterator<Item=(usize, char)>>(chars: &'b mut Peekable<I>, start: usize, left: &'a str)
+-> Option<&'a str> {
+    while let Some(&(end, c)) = chars.peek() {
+        if c == ')' || c == ',' {
+            return Some(&left[start + 1..end]);
+        }
+        chars.next();
+    }
+    None
+}
+
+fn parse_enum_value<'a, 'b, I: Iterator<Item=(usize, char)>>(chars: &'b mut Peekable<I>, start: usize, left: &'a str)
+-> Option<&'a str> {
+    while let Some(&(end, c)) = chars.peek() {
+        if c == '\'' {
+            chars.next(); // skip ending "'"
+            return Some(&left[start + 1..end]);
+        }
+        chars.next();
+    }
+    None
 }
 
 #[cfg(test)]
@@ -365,19 +405,72 @@ mod test {
     }
 
     #[test]
-    fn test_parse_enum8_with_empties() {
+    fn test_parse_enum8_single() {
         let enum8 = remove_white_spaces("Enum8 ('a' = 1)");
 
         let res = parse_enum8(enum8.as_str()).unwrap();
         assert_eq!(res, vec![("a".to_owned(), 1)])
-        // assert_eq!(res, vec![("a".to_owned(), 1), ("b".to_owned(), 2)])
+    }
+
+    #[test]
+    fn test_parse_enum8_empty_id() {
+        let enum8 = remove_white_spaces("Enum8 ('' = 1, '' = 2)");
+
+        let res = parse_enum8(enum8.as_str()).unwrap();
+        assert_eq!(res, vec![("".to_owned(), 1), ("".to_owned(), 2)])
+    }
+
+    #[test]
+    fn test_parse_enum8_single_empty_id() {
+        let enum8 = remove_white_spaces("Enum8 ('' = 1)");
+
+        let res = parse_enum8(enum8.as_str()).unwrap();
+        assert_eq!(res, vec![("".to_owned(), 1)])
+    }
+
+    #[test]
+    fn test_parse_enum8_extra_comma() {
+        let enum8 = remove_white_spaces("Enum8 ('a' = 1, 'b' = 2,)");
+
+        assert!(dbg!(parse_enum8(enum8.as_str())).is_none());
+    }
+
+    #[test]
+    fn test_parse_enum8_empty() {
+        let enum8 = remove_white_spaces("Enum8 ()");
+
+        assert!(dbg!(parse_enum8(enum8.as_str())).is_none());
     }
 
     #[test]
     fn test_parse_enum16() {
-        let enum8 = remove_white_spaces("Enum16 ('a' = 1, 'b' = 2)");
+        let enum16 = remove_white_spaces("Enum16 ('a' = 1, 'b' = 2)");
 
-        let res = parse_enum16(enum8.as_str()).unwrap();
+        let res = parse_enum16(enum16.as_str()).unwrap();
         assert_eq!(res, vec![("a".to_owned(), 1), ("b".to_owned(), 2)])
+    }
+
+    #[test]
+    fn test_parse_enum16_single() {
+        let enum16 = remove_white_spaces("Enum16 ('a' = 1)");
+
+        let res = parse_enum16(enum16.as_str()).unwrap();
+        assert_eq!(res, vec![("a".to_owned(), 1)])
+    }
+
+    #[test]
+    fn test_parse_enum16_empty_id() {
+        let enum16 = remove_white_spaces("Enum16 ('' = 1, '' = 2)");
+
+        let res = parse_enum16(enum16.as_str()).unwrap();
+        assert_eq!(res, vec![("".to_owned(), 1), ("".to_owned(), 2)])
+    }
+
+    #[test]
+    fn test_parse_enum16_single_empty_id() {
+        let enum16 = remove_white_spaces("Enum16 ('' = 1)");
+
+        let res = parse_enum16(enum16.as_str()).unwrap();
+        assert_eq!(res, vec![("".to_owned(), 1)])
     }
 }
