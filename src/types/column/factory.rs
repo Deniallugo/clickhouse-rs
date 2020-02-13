@@ -299,8 +299,10 @@ fn parse_enum(size: EnumSize, input: &str) -> Option<Vec<(&str, &str)>> {
 
     let mut variants: Vec<(&str, &str)> = vec![];
     let mut chars = left.chars().enumerate().peekable();
-    while let Some(variant) = parse_enum_variant(&mut chars, left) {
+    loop {
+        let variant = parse_enum_variant(&mut chars, left)?;
         variants.push(variant);
+        if chars.peek().is_none() { break }
     }
     // check that we reached the end
     if chars.next().is_some() { return None }
@@ -313,18 +315,10 @@ fn parse_enum_variant<'a, 'b, I: Iterator<Item=(usize, char)>>(mut chars: &'b mu
 -> Option<(&'a str, &'a str)> {
     let mut identifier_opt: Option<&str> = None;
     while let Some((start, c)) = chars.next() {
-        // defence against trailing comma
-        if c == ',' {
-            let &(_, peeked) = chars.peek()?;
-            // comma is valid ony if another identifier comes right after it
-            if peeked != '\'' { return None }
-            continue;
-        }
         if let Some(identifier) = identifier_opt {
             // we already have an identifier, now looking for a value
             if c == '=' {
                 let value = parse_enum_identifier(&mut chars, start, left)?;
-                if value.len() == 0 { return None }
                 return Some((identifier, value));
             }
         } else {
@@ -336,16 +330,17 @@ fn parse_enum_variant<'a, 'b, I: Iterator<Item=(usize, char)>>(mut chars: &'b mu
         }
         return None;
     }
-    return None;
+    return None
 }
 
 fn parse_enum_identifier<'a, 'b, I: Iterator<Item=(usize, char)>>(chars: &'b mut Peekable<I>, start: usize, left: &'a str)
 -> Option<&'a str> {
     while let Some(&(end, c)) = chars.peek() {
+        chars.next();
         if c == ')' || c == ',' {
+            if start + 1 == end { return None }
             return Some(&left[start + 1..end]);
         }
-        chars.next();
     }
     None
 }
@@ -353,11 +348,10 @@ fn parse_enum_identifier<'a, 'b, I: Iterator<Item=(usize, char)>>(chars: &'b mut
 fn parse_enum_value<'a, 'b, I: Iterator<Item=(usize, char)>>(chars: &'b mut Peekable<I>, start: usize, left: &'a str)
 -> Option<&'a str> {
     while let Some(&(end, c)) = chars.peek() {
+        chars.next();
         if c == '\'' {
-            chars.next(); // skip ending "'"
             return Some(&left[start + 1..end]);
         }
-        chars.next();
     }
     None
 }
@@ -458,6 +452,13 @@ mod test {
     }
 
     #[test]
+    fn test_parse_enum8_starting_comma() {
+        let enum8 = remove_white_spaces("Enum8 ( , 'a' = 1)");
+
+        assert!(dbg!(parse_enum8(enum8.as_str())).is_none());
+    }
+
+    #[test]
     fn test_parse_enum16() {
         let enum16 = remove_white_spaces("Enum16 ('a' = 1, 'b' = 2)");
 
@@ -513,6 +514,13 @@ mod test {
     #[test]
     fn test_parse_enum16_no_ident() {
         let enum16 = remove_white_spaces("Enum16 ( = 1)");
+
+        assert!(dbg!(parse_enum16(enum16.as_str())).is_none());
+    }
+
+    #[test]
+    fn test_parse_enum16_starting_comma() {
+        let enum16 = remove_white_spaces("Enum16 ( , 'a' = 1)");
 
         assert!(dbg!(parse_enum16(enum16.as_str())).is_none());
     }
